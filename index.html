@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11120d">
+  <title>방구차 — 미로 대질주</title>
+  <style>
+    :root { color-scheme: dark; --ink:#f8e6bd; --muted:#b6a585; --orange:#ff9c42; --line:#50412d; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(ellipse at 50% 0%,#38301d 0,#191910 48%,#10110d 100%); color:var(--ink); font-family:ui-monospace,SFMono-Regular,Consolas,"Malgun Gothic",monospace; display:grid; place-items:center; padding:28px 18px; }
+    .cabinet { width:min(100%,1000px); }
+    .topline { display:flex; justify-content:space-between; align-items:end; gap:16px; margin:0 4px 14px; }
+    .eyebrow { color:#e49a50; font-size:11px; letter-spacing:.24em; text-transform:uppercase; margin-bottom:5px; }
+    h1 { margin:0; font-size:clamp(23px,4vw,38px); letter-spacing:.04em; line-height:1; text-shadow:3px 3px #792c13; }
+    h1 span { color:#ffb65f; }
+    .subtitle { color:var(--muted); font-size:12px; margin:7px 0 0; }
+    .pill { color:#c8b994; border:1px solid #58482e; border-radius:999px; padding:8px 12px; font-size:11px; white-space:nowrap; }
+    .screen { background:#090a08; border:1px solid #76603c; padding:10px; border-radius:9px; box-shadow:0 0 0 4px #211d14,0 22px 60px #000a; }
+    canvas { display:block; width:100%; height:auto; aspect-ratio:768/560; background:#ba4213; image-rendering:pixelated; border:1px solid #37291d; }
+    .below { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:15px 4px 0; color:var(--muted); font-size:12px; }
+    .keys { display:flex; flex-wrap:wrap; gap:8px 14px; }
+    kbd { color:#f2d9a6; background:#28251b; border:1px solid #5d4c31; border-bottom-width:2px; border-radius:4px; padding:3px 6px; font:inherit; font-size:11px; }
+    .sound { color:#f3d9a9; background:#302819; border:1px solid #725730; border-radius:5px; padding:8px 11px; font:inherit; font-size:11px; cursor:pointer; }
+    .sound:hover { background:#46351d; }
+    .mobile-controls { display:none; }
+    @media (max-width:600px) {
+      body { padding:18px 10px; align-content:start; }
+      .topline { align-items:start; }
+      .pill { font-size:9px; padding:7px 8px; }
+      .screen { padding:5px; }
+      .below { align-items:flex-start; padding-top:11px; }
+      .keys { font-size:10px; line-height:2.1; }
+      .mobile-controls { display:grid; grid-template-columns:repeat(3,48px); grid-template-rows:repeat(3,43px); gap:5px; justify-content:center; margin:17px auto 0; touch-action:none; }
+      .mobile-controls button { color:#ffdda3; background:#29251a; border:1px solid #695333; border-radius:6px; font-size:18px; touch-action:none; }
+      .mobile-controls button:active { background:#74401b; }
+      .mobile-controls [data-dir="up"] { grid-column:2; }
+      .mobile-controls [data-dir="left"] { grid-column:1; grid-row:2; }
+      .mobile-controls [data-dir="down"] { grid-column:2; grid-row:2; }
+      .mobile-controls [data-dir="right"] { grid-column:3; grid-row:2; }
+      .mobile-controls [data-dir="boost"] { grid-column:2; grid-row:3; font-size:10px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="cabinet">
+    <header class="topline">
+      <div><div class="eyebrow">★ RETRO ARCADE · 1980s ★</div><h1><span>방구차</span> 미로 대질주</h1><p class="subtitle">가스통을 모으고 출구까지 질주하세요!</p></div>
+      <div class="pill">1 PLAYER &nbsp;·&nbsp; INSERT COIN: FREE</div>
+    </header>
+    <div class="screen"><canvas id="game" width="768" height="560" aria-label="방구차 미로 레이싱 게임"></canvas></div>
+    <div class="below">
+      <div class="keys"><span><kbd>↑ ↓ ← →</kbd> / <kbd>W A S D</kbd> 운전</span><span><kbd>SPACE</kbd> 부스터</span><span><kbd>P</kbd> 일시정지</span><span><kbd>ENTER</kbd> 시작</span></div>
+      <button class="sound" id="sound" type="button">♪ 사운드 켜기</button>
+    </div>
+    <div class="mobile-controls" aria-label="터치 조작">
+      <button data-dir="up" aria-label="위">▲</button><button data-dir="left" aria-label="왼쪽">◀</button><button data-dir="down" aria-label="아래">▼</button><button data-dir="right" aria-label="오른쪽">▶</button><button data-dir="boost" aria-label="부스터">BOOST</button>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      const COLS = 18, ROWS = 10, CELL = 36, OX = 60, OY = 144, ROAD = 27;
+      const keys = new Set();
+      const input = { up:false, down:false, left:false, right:false, boost:false };
+      const audioButton = document.getElementById('sound');
+      let soundOn = false, audio;
+      let maze, pickups, roadMask, roadData, backgroundCanvas, player, state = 'title', score = 0, elapsed = 0, last = 0, particles = [];
+      let best = Number(localStorage.getItem('fangfang-best') || 0);
+      let flash = 0;
+
+      function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }; }
+      function makeMaze() {
+        const random = rng(19840817);
+        const cells = Array.from({length:ROWS}, (_,y) => Array.from({length:COLS}, (_,x) => ({x,y,seen:false,open:{N:false,E:false,S:false,W:false}})));
+        const dirs = [{x:0,y:-1,a:'N',b:'S'},{x:1,y:0,a:'E',b:'W'},{x:0,y:1,a:'S',b:'N'},{x:-1,y:0,a:'W',b:'E'}];
+        const stack = [cells[0][0]]; cells[0][0].seen = true;
+        while(stack.length) {
+          const c = stack[stack.length-1];
+          const next = dirs.filter(d => cells[c.y+d.y]?.[c.x+d.x] && !cells[c.y+d.y][c.x+d.x].seen);
+          if(!next.length) { stack.pop(); continue; }
+          const d = next[Math.floor(random()*next.length)], n = cells[c.y+d.y][c.x+d.x];
+          c.open[d.a] = true; n.open[d.b] = true; n.seen = true; stack.push(n);
+        }
+        // A few extra links make the maze feel like the branching arcade course in the reference.
+        for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if(random()<.075) {
+          const options = dirs.filter(d => cells[y+d.y]?.[x+d.x] && !cells[y][x].open[d.a]);
+          if(options.length) { const d=options[Math.floor(random()*options.length)]; cells[y][x].open[d.a]=true; cells[y+d.y][x+d.x].open[d.b]=true; }
+        }
+        return cells;
+      }
+      function center(x,y) { return {x:OX+x*CELL+CELL/2,y:OY+y*CELL+CELL/2}; }
+      function makeWorld() {
+        maze = makeMaze();
+        const random = rng(29017);
+        const spots=[];
+        for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) if((x||y) && (x!==COLS-1||y!==ROWS-1)) spots.push({x,y});
+        for(let i=spots.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[spots[i],spots[j]]=[spots[j],spots[i]];}
+        pickups = spots.slice(0,8).map(({x,y}) => ({...center(x,y),taken:false,phase:random()*6}));
+        roadMask = document.createElement('canvas'); roadMask.width=W; roadMask.height=H;
+        const m=roadMask.getContext('2d'); m.fillStyle='#fff';
+        for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++) {
+          const p=center(x,y); m.beginPath();m.arc(p.x,p.y,ROAD/2,0,Math.PI*2);m.fill();
+          for(const [dir,dx,dy] of [['E',1,0],['S',0,1]]) if(maze[y][x].open[dir]) {
+            m.fillRect(p.x-ROAD/2,p.y-ROAD/2,dx?CELL:ROAD,dy?CELL:ROAD);
+          }
+        }
+        const maskPixels=m.getImageData(0,0,W,H).data;
+        roadData=new Uint8Array(W*H);
+        for(let i=0;i<roadData.length;i++) roadData[i]=maskPixels[i*4+3];
+        resetCar();
+        drawBackground(true);
+      }
+      function resetCar() { const p=center(0,0); player={x:p.x,y:p.y,vx:0,vy:0,angle:0,invuln:0}; }
+      makeWorld();
+
+      function roundedRect(c,x,y,w,h,r) { c.beginPath();c.roundRect(x,y,w,h,r); }
+      function drawBackground(force=false) {
+        if(backgroundCanvas&&!force){ctx.drawImage(backgroundCanvas,0,0);return;}
+        backgroundCanvas=document.createElement('canvas');backgroundCanvas.width=W;backgroundCanvas.height=H;
+        const c=backgroundCanvas.getContext('2d');
+        c.fillStyle='#120f0b';c.fillRect(0,0,W,H);
+        // Cabinet header and score plates.
+        c.fillStyle='#d18427';c.fillRect(0,0,W,112);
+        c.fillStyle='#f6bc5d';c.fillRect(0,108,W,4);
+        c.fillStyle='#9c3812';c.fillRect(0,112,W,H-112);
+        c.fillStyle='#72250d';c.fillRect(10,120,W-20,H-136);
+        for(let y=116;y<H;y+=8) for(let x=(y/8%2?0:8);x<W;x+=16) {c.fillStyle='#bd4d17';c.fillRect(x,y,5,3);}
+        // Orange dirt, boulders and tiny grain inspired by the supplied arcade screenshot.
+        const random=rng(5512);
+        for(let i=0;i<210;i++) {
+          const x=14+random()*(W-28), y=120+random()*(H-134);
+          if(roadAt(x,y)) continue;
+          const s=2+random()*8;
+          c.fillStyle=random()>.5?'#8b2a10':'#e27521';c.fillRect(x|0,y|0,s|0,2);
+          if(i%9===0){c.fillStyle='#552013';c.fillRect(x|0,y|0,7,4);c.fillStyle='#ba4c19';c.fillRect((x+1)|0,(y-2)|0,5,4);}
+        }
+        // The connected road network.
+        const track=document.createElement('canvas');track.width=W;track.height=H;
+        const trackCtx=track.getContext('2d'), trackPixels=trackCtx.createImageData(W,H);
+        for(let i=0;i<roadData.length;i++) if(roadData[i]) {const k=i*4;trackPixels.data[k]=123;trackPixels.data[k+1]=42;trackPixels.data[k+2]=20;trackPixels.data[k+3]=255;}
+        trackCtx.putImageData(trackPixels,0,0);c.drawImage(track,0,0);
+        c.save();
+        // Broken ivory curb marks on corridor edges.
+        c.strokeStyle='#f4e5bd';c.lineWidth=3;c.setLineDash([11,12]);
+        for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++) {
+          const p=center(x,y), cell=maze[y][x];
+          if(!cell.open.N && y===0){c.beginPath();c.moveTo(p.x-10,p.y-ROAD/2);c.lineTo(p.x+10,p.y-ROAD/2);c.stroke();}
+          if(!cell.open.W && x===0){c.beginPath();c.moveTo(p.x-ROAD/2,p.y-8);c.lineTo(p.x-ROAD/2,p.y+8);c.stroke();}
+          if(cell.open.E){c.beginPath();c.moveTo(p.x+CELL/2,p.y-9);c.lineTo(p.x+CELL/2,p.y+9);c.stroke();}
+          if(cell.open.S){c.beginPath();c.moveTo(p.x-9,p.y+CELL/2);c.lineTo(p.x+9,p.y+CELL/2);c.stroke();}
+        }
+        c.setLineDash([]);c.restore();
+      }
+      function drawHud() {
+        // Logo plaque.
+        ctx.fillStyle='#60220f';roundedRect(ctx,17,16,187,76,5);ctx.fill();ctx.fillStyle='#f8bd58';roundedRect(ctx,13,12,187,76,5);ctx.fill();
+        ctx.fillStyle='#762914';ctx.font='bold 29px monospace';ctx.fillText('방구차',27,50);ctx.fillStyle='#532313';ctx.font='bold 13px monospace';ctx.fillText('FANG FANG',29,72);
+        // Score display.
+        ctx.fillStyle='#60220f';roundedRect(ctx,223,17,216,72,5);ctx.fill();ctx.fillStyle='#291b13';roundedRect(ctx,228,21,206,63,3);ctx.fill();
+        ctx.fillStyle='#d89f5d';ctx.font='11px monospace';ctx.fillText('SCORE',241,37);ctx.fillText('BEST',339,37);
+        ctx.fillStyle='#fff0cf';ctx.font='bold 23px monospace';ctx.fillText(String(score).padStart(5,'0'),241,67);ctx.fillStyle='#e6b45e';ctx.font='bold 18px monospace';ctx.fillText(String(best).padStart(5,'0'),337,66);
+        // Fuel pickups.
+        ctx.fillStyle='#60220f';roundedRect(ctx,452,17,143,72,5);ctx.fill();ctx.fillStyle='#291b13';roundedRect(ctx,457,21,133,63,3);ctx.fill();
+        ctx.fillStyle='#d89f5d';ctx.font='11px monospace';ctx.fillText('GAS CANS',470,37);
+        for(let i=0;i<8;i++){ctx.fillStyle=i<pickups.filter(p=>p.taken).length?'#ffc85d':'#50351f';ctx.fillRect(470+i*14,51,10,18);ctx.fillStyle=i<pickups.filter(p=>p.taken).length?'#fff0a3':'#705033';ctx.fillRect(472+i*14,47,6,5);}
+        // Clock.
+        ctx.fillStyle='#60220f';roundedRect(ctx,608,17,143,72,5);ctx.fill();ctx.fillStyle='#291b13';roundedRect(ctx,613,21,133,63,3);ctx.fill();
+        ctx.fillStyle='#d89f5d';ctx.font='11px monospace';ctx.fillText('TIME',626,37);
+        const mins=String(Math.floor(elapsed/60)).padStart(2,'0'), secs=String(Math.floor(elapsed%60)).padStart(2,'0');
+        ctx.fillStyle='#ffcf76';ctx.font='bold 26px monospace';ctx.fillText(`${mins}:${secs}`,626,69);
+        ctx.fillStyle='#f2d9a7';ctx.font='10px monospace';ctx.fillText('FIND THE EXIT →',620,101);
+      }
+      function drawCar(x,y,angle,color='#f6cb56',blue='#398ac0') {
+        ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+        ctx.fillStyle='#31170f';ctx.fillRect(-10,-7,22,16);
+        ctx.fillStyle='#1b1b18';ctx.fillRect(-7,-10,6,3);ctx.fillRect(4,-10,6,3);ctx.fillRect(-7,7,6,3);ctx.fillRect(4,7,6,3);
+        ctx.fillStyle=color;ctx.fillRect(-9,-6,18,12);ctx.fillStyle=blue;ctx.fillRect(-3,-5,8,10);
+        ctx.fillStyle='#fff0c5';ctx.fillRect(7,-4,3,3);ctx.fillRect(7,2,3,3);
+        ctx.fillStyle='#bc3618';ctx.fillRect(-10,-4,2,3);ctx.fillRect(-10,2,2,3);
+        ctx.fillStyle='#ffe9a3';ctx.fillRect(-1,-3,3,6);
+        ctx.restore();
+      }
+      function drawPickup(p,t) {
+        if(p.taken)return;
+        const bob=Math.sin(t*4+p.phase)*2;
+        ctx.fillStyle='#5e220e';ctx.fillRect(p.x-7,p.y-5+bob,15,13);
+        ctx.fillStyle='#f7bd43';ctx.fillRect(p.x-6,p.y-6+bob,12,11);ctx.fillStyle='#ffe9a5';ctx.fillRect(p.x-3,p.y-9+bob,6,4);
+        ctx.fillStyle='#b9581a';ctx.fillRect(p.x-2,p.y-3+bob,4,6);ctx.fillStyle='#fff0b7';ctx.fillRect(p.x+3,p.y-4+bob,2,3);
+      }
+      function drawGate(t) {
+        const p=center(COLS-1,ROWS-1),open=pickups.every(x=>x.taken);
+        ctx.fillStyle='#31170f';ctx.fillRect(p.x-13,p.y-15,26,30);
+        ctx.fillStyle=open?'#67db72':'#f0b442';ctx.fillRect(p.x-10,p.y-12,20,24);
+        ctx.fillStyle='#4b2414';ctx.fillRect(p.x-6,p.y-7,12,19);ctx.fillStyle=open?'#bbff89':'#ffdf86';ctx.fillRect(p.x+3,p.y+2,2,2);
+        if(!open&&Math.floor(t*3)%2===0){ctx.fillStyle='#fff0c5';ctx.font='bold 10px monospace';ctx.fillText('8!',p.x-7,p.y-19);}
+        else if(open){ctx.fillStyle='#a6ff9a';ctx.font='bold 10px monospace';ctx.fillText('GO!',p.x-10,p.y-19);}
+      }
+      function overlay(title, line1, line2) {
+        ctx.fillStyle='#100d0acc';ctx.fillRect(0,112,W,H-112);
+        ctx.fillStyle='#f7be60';ctx.font='bold 31px monospace';ctx.textAlign='center';ctx.fillText(title,W/2,H/2-18);
+        ctx.fillStyle='#fff0ce';ctx.font='15px monospace';ctx.fillText(line1,W/2,H/2+14);
+        ctx.fillStyle='#e0a55a';ctx.font='12px monospace';ctx.fillText(line2,W/2,H/2+40);ctx.textAlign='left';
+      }
+      function render(t) {
+        drawBackground();drawHud();
+        pickups.forEach(p=>drawPickup(p,t));drawGate(t);
+        if(player.invuln<=0||Math.floor(t*12)%2===0) drawCar(player.x,player.y,player.angle);
+        particles=particles.filter(p=>p.life>0);
+        for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/.45);ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,3,3);ctx.globalAlpha=1;}
+        if(state==='title')overlay('READY, DRIVER?','가스통 8개를 모아 미로의 출구로!','방향키를 누르거나 ENTER를 눌러 출발');
+        if(state==='paused')overlay('PAUSED','잠깐 쉬어도 괜찮아요.','P 또는 ENTER를 눌러 계속하기');
+        if(state==='won')overlay('COURSE CLEAR!','멋진 질주였어요!   SCORE '+String(score).padStart(5,'0'),'ENTER를 눌러 다시 달리기');
+      }
+      function roadAt(x,y) { if(x<1||y<1||x>=W-1||y>=H-1)return false;return roadData[(y|0)*W+(x|0)]>0; }
+      function beep(freq=540,duration=.08,type='square') {
+        if(!soundOn)return;
+        try {audio ||= new (window.AudioContext||window.webkitAudioContext)();const o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(.07,audio.currentTime);g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+duration);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+duration);} catch {}
+      }
+      function startGame() {if(state==='title'||state==='won'){score=0;elapsed=0;makeWorld();state='playing';beep(650,.12);}else if(state==='paused')state='playing';}
+      function setKey(key,on) {
+        const k=key.toLowerCase();
+        if(['arrowup','w'].includes(k))input.up=on;
+        if(['arrowdown','s'].includes(k))input.down=on;
+        if(['arrowleft','a'].includes(k))input.left=on;
+        if(['arrowright','d'].includes(k))input.right=on;
+        if(k===' ')input.boost=on;
+      }
+      window.addEventListener('keydown',e=>{
+        if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+        setKey(e.key,true);
+        if(e.repeat)return;
+        if(e.key==='Enter')startGame();
+        if(e.key.toLowerCase()==='p'){if(state==='playing')state='paused';else if(state==='paused')state='playing';}
+        if(state==='title'&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d'].includes(e.key))startGame();
+      });
+      window.addEventListener('keyup',e=>setKey(e.key,false));
+      window.addEventListener('blur',()=>{for(const k of Object.keys(input))input[k]=false;});
+      document.querySelectorAll('.mobile-controls button').forEach(button=>{
+        const dir=button.dataset.dir;
+        const down=e=>{e.preventDefault();input[dir]=true;if(state==='title')startGame();};
+        const up=e=>{e.preventDefault();input[dir]=false;};
+        button.addEventListener('pointerdown',down);button.addEventListener('pointerup',up);button.addEventListener('pointerleave',up);button.addEventListener('pointercancel',up);
+      });
+      audioButton.addEventListener('click',()=>{soundOn=!soundOn;audioButton.textContent=soundOn?'♫ 사운드 끄기':'♪ 사운드 켜기';if(soundOn)beep(660,.1);});
+      function update(dt,t) {
+        if(state!=='playing')return;
+        elapsed+=dt;
+        const speed=input.boost?150:104;
+        let dx=(input.right?1:0)-(input.left?1:0),dy=(input.down?1:0)-(input.up?1:0);
+        if(dx&&dy){dx*=.707;dy*=.707;}
+        const nx=player.x+dx*speed*dt, ny=player.y+dy*speed*dt;
+        const points=[[0,0],[-5,-4],[5,-4],[-5,4],[5,4]];
+        const can=(x,y)=>points.every(([px,py])=>roadAt(x+px,y+py));
+        let moved=false;
+        if(can(nx,player.y)){player.x=nx;moved=dx!==0;}
+        if(can(player.x,ny)){player.y=ny;moved=moved||dy!==0;}
+        if(moved){if(dx||dy)player.angle=Math.atan2(dy,dx);}
+        if(input.boost&&moved&&Math.random()<.6)particles.push({x:player.x-Math.cos(player.angle)*8,y:player.y-Math.sin(player.angle)*8,life:.45,color:'#ffb845'});
+        player.invuln=Math.max(0,player.invuln-dt);
+        for(const p of pickups)if(!p.taken&&Math.hypot(p.x-player.x,p.y-player.y)<15){p.taken=true;score+=100;beep(720,.12);for(let i=0;i<7;i++)particles.push({x:p.x+(Math.random()-.5)*12,y:p.y+(Math.random()-.5)*12,life:.45,color:'#ffe377'});}
+        const end=center(COLS-1,ROWS-1);
+        if(pickups.every(p=>p.taken)&&Math.hypot(player.x-end.x,player.y-end.y)<16){state='won';score+=Math.max(0,Math.floor(6000-elapsed*20));if(score>best){best=score;localStorage.setItem('fangfang-best',String(best));}beep(900,.35,'triangle');}
+      }
+      function loop(now) {const t=now/1000,dt=Math.min((now-last)/1000,.04);last=now;update(dt,t);render(t);requestAnimationFrame(loop);}
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>
